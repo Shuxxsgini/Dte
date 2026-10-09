@@ -1,0 +1,98 @@
+import { clearToken, getToken } from "./tokenStorage.js";
+
+// Backend address, read from the .env file (falls back to the usual port)
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8001";
+
+// Name of the signal we send when the token stops working.
+// The login system (Step 5) listens for it and logs the user out.
+export const SESSION_EXPIRED_EVENT = "abc-shop:session-expired";
+
+// Our own error type, so pages can read error.status and error.message
+export class ApiError extends Error {
+  constructor(status, message, requestId = null) {
+    super(message);              // readable message to show the user
+    this.status = status;        // HTTP status code (0 = server not reachable)
+    this.requestId = requestId;  // X-Request-ID from the backend (for bug reports)
+  }
+}
+
+// FastAPI sends "detail" in two shapes:
+//   - text, e.g. "Email is already Registered." (400, 401, 404, 409)
+//   - a list of field errors (422 validation errors)
+// This turns both into one readable sentence.
+function readErrorMessage(detail) {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    // Pydantic adds "Value error, " before custom messages; remove it
+    return detail.map((err) => err.msg.replace(/^Value error, /, "")).join(" ");
+  }
+  return "Something went wrong. Please try again.";
+}
+
+/**
+ * Sends a request to the backend and returns the JSON response.
+ * @param {string} path - e.g. "/api/users/me"
+ * @param {object} [options]
+ * @param {"GET"|"POST"|"PUT"|"DELETE"} [options.method="GET"]
+ * @param {object} [options.body] - data to send (turned into JSON)
+ * @param {boolean} [options.auth=false] - true = attach the login token
+ * @returns {Promise<any>} the response data
+ */
+export async function apiRequest(path, { method = "GET", body, auth = false } = {}) {
+  const headers = { "Content-Type": "application/json" };
+
+  // Protected endpoints need "Authorization: Bearer <token>"
+  if (auth) {
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+
+  let response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // fetch only fails like this when the server can't be reached at all
+    throw new ApiError(0, "Cannot reach the server. Is the backend running?");
+  }
+
+  // Read the JSON body. If there is no body, use null.
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    // 401 on a protected request = token expired or invalid → send the signal.
+    // (Not for login itself, where 401 just means a wrong password.)
+    if (response.status === 401 && auth) {
+      clearToken();
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    }
+    throw new ApiError(response.status, readErrorMessage(data?.detail), response.headers.get("X-Request-ID"));
+  }
+
+  return data;
+}
+
+
+
+
+
+homePage.jsx
+
+import { useEffect } from "react";
+import { loginUser } from "../services/authService.js";
+
+function HomePage() {
+  // TEMPORARY TEST: log in as the seeded customer and print the result
+  useEffect(() => {
+    loginUser("rudra@abcshop.com", "rudra1234")
+      .then((data) => console.log("Login OK:", data))
+      .catch((error) => console.error("Login failed:", error.status, error.message));
+  }, []);
+
+  return <h2>Welcome to ABC Shop</h2>;
+}
+
+export default HomePage;
