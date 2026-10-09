@@ -1,0 +1,339 @@
+src/utils/validators.js
+
+// All form validation rules in one place.
+// Each function returns an error message, or "" (empty) when the value is valid.
+// Rules come from the Week 4 PDF, plus the backend's limits
+// (name max 25, email max 50, password max 25, mobile = 10 digits).
+
+const NAME_PATTERN = /^[A-Za-z ]+$/;               // letters and spaces only
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/; // something@something.something
+const MOBILE_PATTERN = /^\d{10}$/;                 // exactly 10 digits
+
+/** Name: required, 6–25 characters, letters (and spaces between words) only */
+export function validateName(name) {
+  const value = name.trim();
+  if (!value) return "Name is required.";
+  if (!NAME_PATTERN.test(value)) return "Name can contain letters and spaces only.";
+  if (value.length < 6) return "Name must be at least 6 characters.";
+  if (value.length > 25) return "Name must be 25 characters or fewer.";
+  return "";
+}
+
+/** Email: required, valid format, at most 50 characters */
+export function validateEmail(email) {
+  const value = email.trim();
+  if (!value) return "Email is required.";
+  if (!EMAIL_PATTERN.test(value)) return "Enter a valid email, like name@example.com.";
+  if (value.length > 50) return "Email must be 50 characters or fewer.";
+  return "";
+}
+
+/** Mobile: required, exactly 10 digits (the backend needs it) */
+export function validateMobile(mobile) {
+  const value = mobile.trim();
+  if (!value) return "Mobile number is required.";
+  if (!MOBILE_PATTERN.test(value)) return "Mobile number must be exactly 10 digits.";
+  return "";
+}
+
+/** Password: 8–25 characters with an uppercase, a lowercase, a number, and a special character */
+export function validatePassword(password) {
+  if (!password) return "Password is required.";
+  if (password.length < 8) return "Password must be at least 8 characters.";
+  if (password.length > 25) return "Password must be 25 characters or fewer.";
+  if (!/[A-Z]/.test(password)) return "Add at least one uppercase letter.";
+  if (!/[a-z]/.test(password)) return "Add at least one lowercase letter.";
+  if (!/[0-9]/.test(password)) return "Add at least one number.";
+  if (!/[^A-Za-z0-9]/.test(password)) return "Add at least one special character, like @ or #.";
+  return "";
+}
+
+/** Any required field (used for the login password) */
+export function validateRequired(value, fieldLabel) {
+  return value.trim() ? "" : `${fieldLabel} is required.`;
+}
+
+/** All register fields at once → { name, email, mobile, password } error messages */
+export const validateRegisterForm = (values) => ({
+  name: validateName(values.name),
+  email: validateEmail(values.email),
+  mobile: validateMobile(values.mobile),
+  password: validatePassword(values.password),
+});
+
+/** All login fields at once → { email, password } error messages */
+export const validateLoginForm = (values) => ({
+  email: validateEmail(values.email),
+  password: validateRequired(values.password, "Password"),
+});
+
+
+
+
+src/hooks/useForm.js
+
+import { useState } from "react";
+
+/**
+ * A small reusable hook for forms (used by Register and Login).
+ * It keeps the field values, works out the errors, and remembers which
+ * fields the user has "touched", so we don't show errors before they type.
+ *
+ * @param {Record<string, string>} initialValues - e.g. { email: "", password: "" }
+ * @param {(values: Record<string, string>) => Record<string, string>} validate
+ */
+export function useForm(initialValues, validate) {
+  const [values, setValues] = useState(initialValues);
+  const [touched, setTouched] = useState({});
+
+  // Errors are recalculated on every render, so they're always up to date
+  const errors = validate(values);
+  const isValid = Object.values(errors).every((message) => message === "");
+
+  // Runs on every key press: copy the old values and change just this field
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+    setValues((previous) => ({ ...previous, [name]: value }));
+  };
+
+  // Runs when the user leaves a field: from now on, show its error
+  const handleBlur = (event) => {
+    const { name } = event.target;
+    setTouched((previous) => ({ ...previous, [name]: true }));
+  };
+
+  // Mark every field as touched (used on submit, so all errors show)
+  const touchAll = () => {
+    const allTouched = {};
+    Object.keys(initialValues).forEach((name) => {
+      allTouched[name] = true;
+    });
+    setTouched(allTouched);
+  };
+
+  // Reset button: every field back to blank, no errors showing
+  const reset = () => {
+    setValues(initialValues);
+    setTouched({});
+  };
+
+  // The error to show under a field (only after it's been touched)
+  const errorFor = (name) => (touched[name] ? errors[name] : "");
+
+  return { values, isValid, handleChange, handleBlur, touchAll, reset, errorFor };
+}
+
+
+
+src/components/common/FormInput.jsx
+
+import PropTypes from "prop-types";
+
+/**
+ * Reusable form field: label + input + error message (or a hint).
+ * Used by the Register and Login forms.
+ */
+function FormInput({ label, name, type = "text", value, onChange, onBlur, error = "", hint = "", autoComplete = "off" }) {
+  const inputId = `field-${name}`;
+
+  return (
+    <div className="mb-3">
+      <label htmlFor={inputId} className="form-label">
+        {label}
+      </label>
+      <input
+        id={inputId}
+        name={name}
+        type={type}
+        value={value}
+        onChange={onChange}
+        onBlur={onBlur}
+        autoComplete={autoComplete}
+        // "is-invalid" turns the box red (Bootstrap)
+        className={`form-control ${error ? "is-invalid" : ""}`}
+        aria-invalid={Boolean(error)}
+        aria-describedby={`${inputId}-message`}
+      />
+      {/* Show the error if there is one, otherwise the hint (if any) */}
+      {error ? (
+        <div id={`${inputId}-message`} className="invalid-feedback">
+          {error}
+        </div>
+      ) : (
+        hint && (
+          <div id={`${inputId}-message`} className="form-text">
+            {hint}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
+
+// PropTypes: the data type each prop must have.
+// React shows a warning in the console if a wrong type is passed.
+FormInput.propTypes = {
+  label: PropTypes.string.isRequired,
+  name: PropTypes.string.isRequired,
+  type: PropTypes.oneOf(["text", "email", "password", "tel", "number"]),
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+  onBlur: PropTypes.func.isRequired,
+  error: PropTypes.string,
+  hint: PropTypes.string,
+  autoComplete: PropTypes.string,
+};
+
+export default FormInput;
+
+
+
+src/components/common/AlertMessage.jsx
+
+import PropTypes from "prop-types";
+
+// A coloured message box (Bootstrap alert). Shows nothing if there's no message.
+function AlertMessage({ type = "danger", message = "" }) {
+  if (!message) return null;
+
+  return (
+    <div className={`alert alert-${type}`} role="alert">
+      {message}
+    </div>
+  );
+}
+
+AlertMessage.propTypes = {
+  type: PropTypes.oneOf(["success", "danger", "warning", "info"]),
+  message: PropTypes.string,
+};
+
+export default AlertMessage;
+
+
+src/pages/RegisterPage.jsx
+
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+
+import FormInput from "../components/common/FormInput.jsx";
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { useForm } from "../hooks/useForm.js";
+import { validateRegisterForm } from "../utils/validators.js";
+import { registerUser } from "../services/authService.js";
+
+// Blank form. Mobile is included because the backend requires it.
+const INITIAL_VALUES = { name: "", email: "", mobile: "", password: "" };
+
+// Milestone 1: Registration page with validations
+function RegisterPage() {
+  const navigate = useNavigate();
+  const { values, isValid, handleChange, handleBlur, touchAll, reset, errorFor } = useForm(
+    INITIAL_VALUES,
+    validateRegisterForm
+  );
+  const [submitting, setSubmitting] = useState(false); // true while the request runs
+  const [serverError, setServerError] = useState(""); // message from the backend
+
+  const handleSubmit = async (event) => {
+    event.preventDefault(); // stop the browser from reloading the page
+    touchAll();             // show every field's error
+    if (!isValid) return;   // prevent registration if validation fails
+
+    setSubmitting(true);
+    setServerError("");
+    try {
+      await registerUser({
+        name: values.name.trim(),
+        email: values.email.trim(),
+        mobile: values.mobile.trim(),
+        password: values.password,
+      });
+      // Success: go to Login with a green message (we'll show it in Step 3)
+      navigate("/login", { state: { success: "Registration successful. Please log in." } });
+    } catch (error) {
+      // e.g. 409 "Email is already Registered." (the email uniqueness check)
+      setServerError(error.message);
+      setSubmitting(false);
+    }
+  };
+
+  const handleReset = () => {
+    reset(); // all fields back to blank
+    setServerError("");
+  };
+
+  return (
+    <div className="row justify-content-center">
+      <div className="col-md-7 col-lg-5">
+        <h1 className="h3 text-center mb-4">Register</h1>
+
+        <AlertMessage type="danger" message={serverError} />
+
+        {/* noValidate: we show our own messages instead of the browser's */}
+        <form onSubmit={handleSubmit} noValidate>
+          <FormInput
+            label="Full Name"
+            name="name"
+            value={values.name}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            error={errorFor("name")}
+            autoComplete="name"
+          />
+          <FormInput
+            label="Email address"
+            name="email"
+            type="email"
+            value={values.email}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            error={errorFor("email")}
+            autoComplete="email"
+          />
+          <FormInput
+            label="Mobile number"
+            name="mobile"
+            type="tel"
+            value={values.mobile}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            error={errorFor("mobile")}
+            hint="10 digits, e.g. 9876543210"
+            autoComplete="tel"
+          />
+          <FormInput
+            label="Password"
+            name="password"
+            type="password"
+            value={values.password}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            error={errorFor("password")}
+            hint="8–25 characters with an uppercase letter, a lowercase letter, a number, and a special character."
+            autoComplete="new-password"
+          />
+
+          <div className="d-flex gap-2">
+            {/* Enabled only when every field is valid; disabled while the request runs */}
+            <button type="submit" className="btn btn-dark flex-grow-1" disabled={!isValid || submitting}>
+              {submitting ? "Registering..." : "Register"}
+            </button>
+            <button type="button" className="btn btn-outline-secondary" onClick={handleReset} disabled={submitting}>
+              Reset
+            </button>
+          </div>
+        </form>
+
+        <p className="text-center small mt-3">
+          Already have an account? <Link to="/login">Login</Link>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export default RegisterPage;
+
+
+
