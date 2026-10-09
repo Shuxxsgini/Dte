@@ -1,0 +1,126 @@
+import { NavLink } from "react-router-dom";
+
+// All menu links in one list. To add a page later, add one line here.
+const MENU_LINKS = [
+  { path: "/", label: "Home" },
+  { path: "/products", label: "Products" },
+  { path: "/cart", label: "Cart" },
+  { path: "/orders", label: "My Orders" },
+];
+
+// Menu: links to the main sections of the app
+function Menu() {
+  return (
+    <nav aria-label="Main menu">
+      <ul className="nav">
+        {/* .map() turns each item of the list into a <li> */}
+        {MENU_LINKS.map((link) => (
+          <li className="nav-item" key={link.path}>
+            {/* NavLink switches pages without reloading and adds the
+                "active" class to the link of the page we're on.
+                end on "/" so Home isn't active on every page */}
+            <NavLink to={link.path} end={link.path === "/"} className="nav-link text-dark">
+              {link.label}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+export default Menu;
+
+
+
+
+import { Link } from "react-router-dom";
+import Menu from "./Menu.jsx";
+
+// Header: brand name on the left, menu in the middle, user area on the right
+function Header() {
+  return (
+    <header className="border-bottom bg-white">
+      {/* flex-wrap lets items move to a new line on small screens */}
+      <div className="container d-flex flex-wrap align-items-center justify-content-between gap-2 py-2">
+        <Link to="/" className="fw-bold fs-4 text-dark text-decoration-none">
+          ABC SHOP
+        </Link>
+
+        <Menu />
+
+        {/* User area. In Step 3 this changes after login (name, cart badge, Logout) */}
+        <div className="d-flex align-items-center gap-2">
+          <Link to="/login" className="btn btn-outline-dark btn-sm">
+            Login
+          </Link>
+          <Link to="/register" className="btn btn-dark btn-sm">
+            Register
+          </Link>
+          <Link to="/login" className="text-dark fs-4" aria-label="Profile">
+            <i className="bi bi-person-circle"></i>
+          </Link>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+export default Header;
+
+
+
+
+import { Link } from "react-router-dom";
+
+// Footer: about text, quick links, contact details, and copyright
+function Footer() {
+  // The year updates by itself every year
+  const currentYear = new Date().getFullYear();
+
+  return (
+    // mt-auto pushes the footer to the bottom of the page
+    <footer className="bg-dark text-light mt-auto">
+      <div className="container py-4">
+        <div className="row">
+          {/* col-md-3 = 4 columns side by side on laptops, stacked on phones */}
+          <div className="col-md-3 mb-3">
+            <h5>ABC SHOP</h5>
+            <p className="small mb-0">Your Own Shubhangini&apos;s Stop</p>
+          </div>
+
+          <div className="col-md-3 mb-3">
+            <h6>Shop</h6>
+            <ul className="list-unstyled small mb-0">
+              <li><Link to="/products" className="footer-link">All Products</Link></li>
+              <li><Link to="/cart" className="footer-link">My Cart</Link></li>
+            </ul>
+          </div>
+
+          <div className="col-md-3 mb-3">
+            <h6>Customer Service</h6>
+            <ul className="list-unstyled small mb-0">
+              <li><Link to="/orders" className="footer-link">My Orders</Link></li>
+              <li><Link to="/profile" className="footer-link">My Account</Link></li>
+            </ul>
+          </div>
+
+          <div className="col-md-3 mb-3">
+            <h6>Contact Us</h6>
+            <p className="small mb-1">
+              <i className="bi bi-envelope me-2"></i>support@abcshop.com
+            </p>
+            <p className="small mb-0">
+              <i className="bi bi-telephone me-2"></i>+91 98765 43210
+            </p>
+          </div>
+        </div>
+
+        <hr className="border-secondary" />
+        <p className="small text-center mb-0">© {currentYear} ABC Shop. All rights reserved.</p>
+      </div>
+    </footer>
+  );
+}
+
+export default Footer;
