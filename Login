@@ -1,0 +1,431 @@
+src/context/AuthContext.jsx
+
+import { createContext, useContext, useEffect, useState } from "react";
+import PropTypes from "prop-types";
+
+import { getCurrentUser, loginUser } from "../services/authService.js";
+import { clearToken, getToken, saveToken } from "../services/tokenStorage.js";
+import { SESSION_EXPIRED_EVENT } from "../services/apiClient.js";
+
+// A "context" shares data with every component without passing props
+// through each level. This one shares who is logged in.
+const AuthContext = createContext(null);
+
+export function AuthProvider({ children }) {
+  // The logged-in user ({ user_id, name, email, mobile, role }), or null
+  const [user, setUser] = useState(null);
+
+  // true while we check a saved token on startup (only if there is one)
+  const [loading, setLoading] = useState(() => Boolean(getToken()));
+
+  // On startup: if a token was saved earlier, ask the backend who it belongs to.
+  // This is why you stay logged in after refreshing the page.
+  useEffect(() => {
+    if (!getToken()) return;
+
+    getCurrentUser()
+      .then((me) => setUser(me))
+      .catch(() => {
+        clearToken(); // token expired or invalid: forget it
+        setUser(null);
+      })
+      .finally(() => setLoading(false));
+  }, []);
+
+  // If any request gets a 401 (token expired), apiClient sends this signal → log out
+  useEffect(() => {
+    const handleSessionExpired = () => setUser(null);
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+    // Cleanup: stop listening when this component goes away
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired);
+  }, []);
+
+  // Log in: 1) get a token  2) save it  3) ask the backend who we are (incl. role)
+  const login = async (email, password) => {
+    const { access_token: accessToken } = await loginUser(email, password);
+    saveToken(accessToken);
+    const me = await getCurrentUser();
+    setUser(me);
+    return me;
+  };
+
+  // Log out: forget the token and the user
+  const logout = () => {
+    clearToken();
+    setUser(null);
+  };
+
+  const value = { user, loading, isLoggedIn: user !== null, login, logout };
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+AuthProvider.propTypes = {
+  children: PropTypes.node.isRequired,
+};
+
+// Shortcut so any component can write: const { user, login } = useAuth();
+// eslint-disable-next-line react-refresh/only-export-components
+export const useAuth = () => useContext(AuthContext);
+
+
+
+src/main.jsx (replace everything)
+
+// Entry point: React starts here and draws <App /> inside
+// the <div id="root"> in index.html.
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+
+// Load Bootstrap styles and icons once, for the whole app
+import "bootstrap/dist/css/bootstrap.min.css";
+import "bootstrap-icons/font/bootstrap-icons.css";
+import "./index.css";
+
+import App from "./App.jsx";
+import { AuthProvider } from "./context/AuthContext.jsx";
+
+createRoot(document.getElementById("root")).render(
+  <StrictMode>
+    {/* BrowserRouter: lets the app use URLs like /login and /profile */}
+    <BrowserRouter>
+      {/* AuthProvider: shares "who is logged in" with every page */}
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </BrowserRouter>
+  </StrictMode>
+);
+
+
+src/components/common/Loader.jsx
+
+import PropTypes from "prop-types";
+
+// A spinning circle shown while data is loading
+function Loader({ text = "Loading..." }) {
+  return (
+    <div className="d-flex align-items-center gap-2 py-4 text-secondary">
+      <div className="spinner-border spinner-border-sm" aria-hidden="true"></div>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+Loader.propTypes = {
+  text: PropTypes.string,
+};
+
+export default Loader;
+
+
+src/components/common/ProtectedRoute.jsx
+
+import { Navigate, useLocation } from "react-router-dom";
+import PropTypes from "prop-types";
+
+import Loader from "./Loader.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
+
+/**
+ * Wraps pages that need a login (profile now; cart, checkout, orders later).
+ * Logged out → send to /login, remembering where the user wanted to go.
+ */
+function ProtectedRoute({ children }) {
+  const { isLoggedIn, loading } = useAuth();
+  const location = useLocation();
+
+  // Still checking a saved token: wait instead of redirecting too early
+  if (loading) return <Loader text="Checking your login..." />;
+
+  if (!isLoggedIn) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname, message: "Please log in to continue." }}
+      />
+    );
+  }
+
+  return children;
+}
+
+ProtectedRoute.propTypes = {
+  children: PropTypes.node.isRequired,
+};
+
+export default ProtectedRoute;
+
+
+src/pages/LoginPage.jsx (replace the placeholder)
+
+import { useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+
+import FormInput from "../components/common/FormInput.jsx";
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { useForm } from "../hooks/useForm.js";
+import { validateLoginForm } from "../utils/validators.js";
+import { useAuth } from "../context/AuthContext.jsx";
+
+const INITIAL_VALUES = { email: "", password: "" };
+
+// Milestone 1: Login page with validations
+function LoginPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { login } = useAuth();
+
+  const { values, isValid, handleChange, handleBlur, touchAll, reset, errorFor } = useForm(
+    INITIAL_VALUES,
+    validateLoginForm
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState("");
+
+  // Messages passed from other pages (after registering, or from a protected page)
+  const successMessage = location.state?.success ?? "";
+  const infoMessage = location.state?.message ?? "";
+  // Where to go after logging in: the page the user wanted, or the home page
+  const redirectTo = location.state?.from ?? "/";
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    touchAll();
+    if (!isValid) return;
+
+    setSubmitting(true);
+    setServerError("");
+    try {
+      // Works for every role: customer, admin, support. The backend decides.
+      await login(values.email.trim(), values.password);
+      navigate(redirectTo, { replace: true });
+    } catch (error) {
+      // e.g. 401 "Invalid email or password."
+      setServerError(error.message);
+      setSubmitting(false);
+    }
+  };
+
+  const handleReset = () => {
+    reset();
+    setServerError("");
+  };
+
+  return (
+    <div className="row justify-content-center">
+      <div className="col-md-7 col-lg-5">
+        <h1 className="h3 text-center mb-4">Login</h1>
+
+        <AlertMessage type="success" message={successMessage} />
+        <AlertMessage type="info" message={infoMessage} />
+        <AlertMessage type="danger" message={serverError} />
+
+        <form onSubmit={handleSubmit} noValidate>
+          <FormInput
+            label="Email address"
+            name="email"
+            type="email"
+            value={values.email}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            error={errorFor("email")}
+            autoComplete="email"
+          />
+          <FormInput
+            label="Password"
+            name="password"
+            type="password"
+            value={values.password}
+            onChange={handleChange}
+            onBlur={handleBlur}
+            error={errorFor("password")}
+            autoComplete="current-password"
+          />
+
+          <div className="d-flex gap-2">
+            {/* Enabled only when both fields are valid; disabled while the request runs */}
+            <button type="submit" className="btn btn-dark flex-grow-1" disabled={!isValid || submitting}>
+              {submitting ? "Logging in..." : "Login"}
+            </button>
+            <button type="button" className="btn btn-outline-secondary" onClick={handleReset} disabled={submitting}>
+              Reset
+            </button>
+          </div>
+        </form>
+
+        <p className="text-center small mt-3">
+          Don&apos;t have an account? <Link to="/register">Register</Link>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+export default LoginPage;
+
+
+src/pages/ProfilePage.jsx (new)
+
+import { useNavigate } from "react-router-dom";
+
+import { useAuth } from "../context/AuthContext.jsx";
+
+// Profile: the logged-in user's details (from GET /api/users/me)
+function ProfilePage() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
+
+  return (
+    <div className="row justify-content-center">
+      <div className="col-md-7 col-lg-5">
+        <h1 className="h3 mb-4">My Profile</h1>
+
+        {/* dl = description list: a label (dt) and its value (dd) */}
+        <dl className="row">
+          <dt className="col-4">Name</dt>
+          <dd className="col-8">{user.name}</dd>
+          <dt className="col-4">Email</dt>
+          <dd className="col-8">{user.email}</dd>
+          <dt className="col-4">Mobile</dt>
+          <dd className="col-8">{user.mobile}</dd>
+          <dt className="col-4">Role</dt>
+          <dd className="col-8 text-capitalize">{user.role}</dd>
+        </dl>
+
+        <button type="button" className="btn btn-dark" onClick={handleLogout}>
+          Logout
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export default ProfilePage;
+
+
+src/components/layout/Header.jsx (replace everything)
+
+import { Link, useNavigate } from "react-router-dom";
+
+import Menu from "./Menu.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
+
+// Header: brand name, menu, and the user area (changes after login)
+function Header() {
+  const { user, isLoggedIn, logout } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
+
+  return (
+    <header className="border-bottom bg-white">
+      {/* flex-wrap lets items move to a new line on small screens */}
+      <div className="container d-flex flex-wrap align-items-center justify-content-between gap-2 py-2">
+        <Link to="/" className="fw-bold fs-4 text-dark text-decoration-none">
+          ABC SHOP
+        </Link>
+
+        <Menu />
+
+        <div className="d-flex align-items-center gap-2">
+          {isLoggedIn ? (
+            // Shown when logged in
+            <>
+              {/* Role badge for staff accounts (role comes from the backend) */}
+              {user.role !== "customer" && (
+                <span className="badge text-bg-warning text-capitalize">{user.role}</span>
+              )}
+              <Link
+                to="/profile"
+                className="text-dark text-decoration-none d-flex align-items-center gap-1"
+                title="My profile"
+              >
+                <i className="bi bi-person-circle fs-4"></i>
+                <span className="d-none d-md-inline">{user.name}</span>
+              </Link>
+              <button type="button" className="btn btn-dark btn-sm" onClick={handleLogout}>
+                Logout
+              </button>
+            </>
+          ) : (
+            // Shown when logged out
+            <>
+              <Link to="/login" className="btn btn-outline-dark btn-sm">
+                Login
+              </Link>
+              <Link to="/register" className="btn btn-dark btn-sm">
+                Register
+              </Link>
+              <Link to="/login" className="text-dark fs-4" aria-label="Profile">
+                <i className="bi bi-person-circle"></i>
+              </Link>
+            </>
+          )}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+export default Header;
+
+
+src/App.jsx (replace everything)
+
+import { Route, Routes } from "react-router-dom";
+
+import Header from "./components/layout/Header.jsx";
+import Footer from "./components/layout/Footer.jsx";
+import ProtectedRoute from "./components/common/ProtectedRoute.jsx";
+
+import HomePage from "./pages/HomePage.jsx";
+import RegisterPage from "./pages/RegisterPage.jsx";
+import LoginPage from "./pages/LoginPage.jsx";
+import ProfilePage from "./pages/ProfilePage.jsx";
+
+// App = the page layout (Header, Main Content, Footer) + the list of pages.
+function App() {
+  return (
+    <div className="d-flex flex-column min-vh-100">
+      <Header />
+
+      {/* Main Content area. flex-grow-1 = take all leftover space */}
+      <main className="flex-grow-1 container py-4">
+        <Routes>
+          {/* Public pages */}
+          <Route path="/" element={<HomePage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/login" element={<LoginPage />} />
+
+          {/* Protected page: ProtectedRoute sends logged-out users to /login */}
+          <Route
+            path="/profile"
+            element={
+              <ProtectedRoute>
+                <ProfilePage />
+              </ProtectedRoute>
+            }
+          />
+        </Routes>
+      </main>
+
+      <Footer />
+    </div>
+  );
+}
+
+export default App;
+
+
+
