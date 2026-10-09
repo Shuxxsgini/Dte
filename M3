@@ -1,0 +1,484 @@
+src/services/cartService.js
+
+// Calls for the logged-in user's cart. All need the token (auth: true).
+import { apiRequest } from "./apiClient.js";
+
+/** Cart items: [{ cart_item_id, quantity, product: { product_id, product_name, price } }] */
+export const getCartItems = () => apiRequest("/api/cart", { auth: true });
+
+/** Totals: { total_items, total_quantity, total_amount } */
+export const getCartSummary = () => apiRequest("/api/cart/summary", { auth: true });
+
+/**
+ * Add a product (adds to the quantity if it's already in the cart).
+ * @param {number} productId
+ * @param {number} quantity
+ */
+export const addToCart = (productId, quantity) =>
+  apiRequest("/api/cart/add", { method: "POST", body: { product_id: productId, quantity }, auth: true });
+
+/**
+ * Change the quantity of one cart item.
+ * @param {number} cartItemId
+ * @param {number} quantity
+ */
+export const updateCartItem = (cartItemId, quantity) =>
+  apiRequest(`/api/cart/update/${cartItemId}`, { method: "PUT", body: { quantity }, auth: true });
+
+/**
+ * Remove one item from the cart.
+ * @param {number} cartItemId
+ */
+export const removeCartItem = (cartItemId) =>
+  apiRequest(`/api/cart/remove/${cartItemId}`, { method: "DELETE", auth: true });
+
+
+
+
+
+
+src/utils/validators.js (add at the bottom)
+
+/**
+ * Quantity: a whole number from 1 up to the stock available.
+ * @param {string|number} value - what the user typed
+ * @param {number} maxStock - available quantity of the product
+ */
+export function validateQuantity(value, maxStock) {
+  const text = String(value).trim();
+  if (!text) return "Quantity is required.";
+  if (!/^\d+$/.test(text) || Number(text) < 1) return "Enter a whole number of 1 or more.";
+  if (Number(text) > maxStock) return `Only ${maxStock} in stock.`;
+  return "";
+}
+
+
+
+
+
+
+3. src/components/products/ProductCard.jsx (replace everything)
+
+import { Link } from "react-router-dom";
+import PropTypes from "prop-types";
+
+// One product card: name, category, price, Add to Cart
+function ProductCard({ product, onAddToCart }) {
+  const inStock = product.available_quantity > 0;
+
+  return (
+    <div className="card h-100">
+      <div className="card-body d-flex flex-column">
+        <h5 className="card-title">
+          <Link to={`/products/${product.product_id}`} className="text-dark">
+            {product.product_name}
+          </Link>
+        </h5>
+        <p className="text-secondary mb-2">{product.category.category_name}</p>
+        <p className="fw-bold mt-auto">₹{product.price}</p>
+
+        {/* Enabled only if in stock; otherwise show "Out of Stock" */}
+        {inStock ? (
+          <button type="button" className="btn btn-dark" onClick={() => onAddToCart(product)}>
+            Add to Cart
+          </button>
+        ) : (
+          <button type="button" className="btn btn-secondary" disabled>
+            Out of Stock
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ProductCard.propTypes = {
+  product: PropTypes.shape({
+    product_id: PropTypes.number.isRequired,
+    product_name: PropTypes.string.isRequired,
+    price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    available_quantity: PropTypes.number.isRequired,
+    category: PropTypes.shape({
+      category_name: PropTypes.string.isRequired,
+    }).isRequired,
+  }).isRequired,
+  onAddToCart: PropTypes.func.isRequired,
+};
+
+export default ProductCard;
+
+
+
+
+
+
+4. src/pages/ProductListPage.jsx (replace everything)
+
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import SearchBar from "../components/products/SearchBar.jsx";
+import ProductCard from "../components/products/ProductCard.jsx";
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getProducts } from "../services/productService.js";
+import { addToCart } from "../services/cartService.js";
+import { useAuth } from "../context/AuthContext.jsx";
+
+// Milestone 2 + 3: Product listing, search, and Add to Cart
+function ProductListPage() {
+  const navigate = useNavigate();
+  const { isLoggedIn } = useAuth();
+
+  const [products, setProducts] = useState([]);
+  const [searchText, setSearchText] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState(""); // "added to cart" message
+
+  // Load all products once
+  useEffect(() => {
+    getProducts()
+      .then((data) => setProducts(data))
+      .catch((err) => setError(err.message));
+  }, []);
+
+  // Keep products whose name OR category contains the search text
+  const search = searchText.trim().toLowerCase();
+  const filteredProducts = products.filter(
+    (product) =>
+      product.product_name.toLowerCase().includes(search) ||
+      product.category.category_name.toLowerCase().includes(search)
+  );
+
+  const handleAddToCart = async (product) => {
+    // The cart needs a login: go to Login, then come back here
+    if (!isLoggedIn) {
+      navigate("/login", { state: { from: "/products", message: "Please log in to add items to your cart." } });
+      return;
+    }
+
+    setError("");
+    try {
+      await addToCart(product.product_id, 1);
+      setMessage(`${product.product_name} was added to your cart.`);
+    } catch (err) {
+      // e.g. "Only 5 'Apron' in stock." when the cart already holds them all
+      setMessage("");
+      setError(err.message);
+    }
+  };
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Products</h1>
+
+      <SearchBar value={searchText} onChange={setSearchText} />
+      <AlertMessage type="success" message={message} />
+      <AlertMessage type="danger" message={error} />
+
+      {filteredProducts.length === 0 ? (
+        !error && <p>No products found.</p>
+      ) : (
+        <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
+          {filteredProducts.map((product) => (
+            <div className="col" key={product.product_id}>
+              <ProductCard product={product} onAddToCart={handleAddToCart} />
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default ProductListPage;
+
+
+
+
+
+5. src/pages/ProductDetailsPage.jsx (replace everything)
+
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getProductById } from "../services/productService.js";
+import { addToCart } from "../services/cartService.js";
+import { useAuth } from "../context/AuthContext.jsx";
+
+// Milestone 2 + 3: Product details with Add to Cart
+function ProductDetailsPage() {
+  const { productId } = useParams();
+  const navigate = useNavigate();
+  const { isLoggedIn } = useAuth();
+
+  const [product, setProduct] = useState(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    getProductById(productId)
+      .then((data) => setProduct(data))
+      .catch((err) => setError(err.message));
+  }, [productId]);
+
+  const handleAddToCart = async () => {
+    if (!isLoggedIn) {
+      navigate("/login", { state: { from: `/products/${productId}`, message: "Please log in to add items to your cart." } });
+      return;
+    }
+
+    setError("");
+    try {
+      await addToCart(product.product_id, 1);
+      setMessage(`${product.product_name} was added to your cart.`);
+    } catch (err) {
+      setMessage("");
+      setError(err.message);
+    }
+  };
+
+  if (!product) return <AlertMessage type="danger" message={error} />;
+
+  const inStock = product.available_quantity > 0;
+
+  return (
+    <>
+      <Link to="/products">Back to products</Link>
+
+      <div className="mt-3">
+        <AlertMessage type="success" message={message} />
+        <AlertMessage type="danger" message={error} />
+      </div>
+
+      <h1 className="h3">{product.product_name}</h1>
+      <p className="text-secondary">{product.category.category_name}</p>
+      <p className="fs-4 fw-bold">₹{product.price}</p>
+      <p>{product.description || "No description available."}</p>
+      <p>{inStock ? `In stock: ${product.available_quantity}` : "Out of Stock"}</p>
+
+      <button type="button" className="btn btn-dark" disabled={!inStock} onClick={handleAddToCart}>
+        {inStock ? "Add to Cart" : "Out of Stock"}
+      </button>
+    </>
+  );
+}
+
+export default ProductDetailsPage;
+
+
+
+
+
+
+
+
+6. src/components/cart/CartItemRow.jsx (new folder cart)
+
+import { useState } from "react";
+import PropTypes from "prop-types";
+
+import { validateQuantity } from "../../utils/validators.js";
+
+// One row of the cart: product, price, quantity box, subtotal, Update, Remove
+function CartItemRow({ item, stock, onUpdate, onRemove }) {
+  // What the user types in the quantity box (text while typing)
+  const [quantity, setQuantity] = useState(String(item.quantity));
+
+  const error = validateQuantity(quantity, stock);
+  const changed = Number(quantity) !== item.quantity;
+  const subtotal = (Number(item.product.price) * item.quantity).toFixed(2);
+
+  return (
+    <tr>
+      <td>{item.product.product_name}</td>
+      <td>₹{item.product.price}</td>
+      <td>
+        <input
+          type="number"
+          min="1"
+          max={stock}
+          aria-label={`Quantity of ${item.product.product_name}`}
+          className={`form-control form-control-sm ${error ? "is-invalid" : ""}`}
+          style={{ maxWidth: "90px" }}
+          value={quantity}
+          onChange={(event) => setQuantity(event.target.value)}
+        />
+        {/* Invalid quantity: show the error (and Update stays disabled) */}
+        {error && <div className="invalid-feedback d-block">{error}</div>}
+      </td>
+      <td>₹{subtotal}</td>
+      <td className="text-nowrap">
+        <button
+          type="button"
+          className="btn btn-outline-dark btn-sm me-2"
+          disabled={Boolean(error) || !changed}
+          onClick={() => onUpdate(item.cart_item_id, Number(quantity))}
+        >
+          Update
+        </button>
+        <button type="button" className="btn btn-outline-danger btn-sm" onClick={() => onRemove(item.cart_item_id)}>
+          Remove
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+CartItemRow.propTypes = {
+  item: PropTypes.shape({
+    cart_item_id: PropTypes.number.isRequired,
+    quantity: PropTypes.number.isRequired,
+    product: PropTypes.shape({
+      product_name: PropTypes.string.isRequired,
+      price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    }).isRequired,
+  }).isRequired,
+  stock: PropTypes.number.isRequired,
+  onUpdate: PropTypes.func.isRequired,
+  onRemove: PropTypes.func.isRequired,
+};
+
+export default CartItemRow;
+
+
+
+
+
+
+7. src/pages/CartPage.jsx (new)
+
+import { useCallback, useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+
+import CartItemRow from "../components/cart/CartItemRow.jsx";
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getCartItems, getCartSummary, removeCartItem, updateCartItem } from "../services/cartService.js";
+import { getProducts } from "../services/productService.js";
+
+// Milestone 3: Cart (view, update quantity, remove, total, checkout)
+function CartPage() {
+  const navigate = useNavigate();
+
+  const [items, setItems] = useState([]);
+  const [summary, setSummary] = useState(null); // { total_quantity, total_amount, ... }
+  const [stockById, setStockById] = useState({}); // { product_id: available_quantity }
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  // Load the cart, the totals, and the stock together.
+  // (Cart items don't include stock, so we read it from the product list.)
+  const loadCart = useCallback(async () => {
+    try {
+      const [cartItems, cartSummary, products] = await Promise.all([
+        getCartItems(),
+        getCartSummary(),
+        getProducts(),
+      ]);
+
+      const stock = {};
+      products.forEach((product) => {
+        stock[product.product_id] = product.available_quantity;
+      });
+
+      setItems(cartItems);
+      setSummary(cartSummary);
+      setStockById(stock);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCart();
+  }, [loadCart]);
+
+  // After each change we reload, so the total updates automatically
+  const handleUpdate = async (cartItemId, quantity) => {
+    setError("");
+    try {
+      await updateCartItem(cartItemId, quantity);
+      await loadCart();
+      setMessage("Quantity updated.");
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleRemove = async (cartItemId) => {
+    setError("");
+    try {
+      await removeCartItem(cartItemId);
+      await loadCart();
+      setMessage("Item removed from your cart.");
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // Until the first answer arrives, show only an error (if any)
+  if (!summary) return <AlertMessage type="danger" message={error} />;
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Your Cart</h1>
+      <AlertMessage type="success" message={message} />
+      <AlertMessage type="danger" message={error} />
+
+      {items.length === 0 ? (
+        <p>
+          Your cart is empty. <Link to="/products">Browse products</Link>
+        </p>
+      ) : (
+        <div className="table-responsive">
+          <table className="table align-middle">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Price</th>
+                <th>Qty</th>
+                <th>Subtotal</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item) => (
+                <CartItemRow
+                  key={item.cart_item_id}
+                  item={item}
+                  // A product removed from the shop isn't in the list → stock 0
+                  stock={stockById[item.product.product_id] ?? 0}
+                  onUpdate={handleUpdate}
+                  onRemove={handleRemove}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Cart summary: item count and total amount (from /api/cart/summary) */}
+      <div className="text-end">
+        <p className="mb-1">Items: {summary.total_quantity}</p>
+        <p className="fs-5 fw-bold">Total: ₹{summary.total_amount}</p>
+        {/* Enabled only if the cart isn't empty */}
+        <button
+          type="button"
+          className="btn btn-dark"
+          disabled={items.length === 0}
+          onClick={() => navigate("/checkout")}
+        >
+          Checkout
+        </button>
+      </div>
+    </>
+  );
+}
+
+export default CartPage;
+
+
+
+
+
+
