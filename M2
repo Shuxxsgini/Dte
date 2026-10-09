@@ -1,0 +1,209 @@
+src/services/productService.js (replace everything)
+
+// Calls for products and categories (public, no login needed)
+import { apiRequest } from "./apiClient.js";
+
+/** All categories: [{ category_id, category_name }] */
+export const getCategories = () => apiRequest("/api/categories");
+
+/** All active products */
+export const getProducts = () => apiRequest("/api/products");
+
+/**
+ * One product by its ID.
+ * @param {number|string} productId
+ */
+export const getProductById = (productId) => apiRequest(`/api/products/${productId}`);
+
+
+
+
+
+
+src/components/products/SearchBar.jsx (new folder products)
+
+import PropTypes from "prop-types";
+
+// Search box at the top of the product list
+function SearchBar({ value, onChange }) {
+  return (
+    <input
+      type="search"
+      className="form-control mb-4"
+      placeholder="Search by product name or category..."
+      aria-label="Search products"
+      value={value}
+      // Send each new value up to the page as the user types
+      onChange={(event) => onChange(event.target.value)}
+    />
+  );
+}
+
+SearchBar.propTypes = {
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+};
+
+export default SearchBar;
+
+
+
+src/components/products/ProductCard.jsx
+
+import { Link } from "react-router-dom";
+import PropTypes from "prop-types";
+
+// One product card: name, category, price, Add to Cart
+function ProductCard({ product }) {
+  const inStock = product.available_quantity > 0;
+
+  return (
+    <div className="card h-100">
+      <div className="card-body d-flex flex-column">
+        {/* Clicking the name opens the product details page */}
+        <h5 className="card-title">
+          <Link to={`/products/${product.product_id}`} className="text-dark">
+            {product.product_name}
+          </Link>
+        </h5>
+        <p className="text-secondary mb-2">{product.category.category_name}</p>
+        <p className="fw-bold mt-auto">₹{product.price}</p>
+
+        {/* Enabled only if in stock; otherwise show "Out of Stock".
+            The click action is added in Milestone 3 (cart). */}
+        {inStock ? (
+          <button type="button" className="btn btn-dark">
+            Add to Cart
+          </button>
+        ) : (
+          <button type="button" className="btn btn-secondary" disabled>
+            Out of Stock
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ProductCard.propTypes = {
+  product: PropTypes.shape({
+    product_id: PropTypes.number.isRequired,
+    product_name: PropTypes.string.isRequired,
+    price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    available_quantity: PropTypes.number.isRequired,
+    category: PropTypes.shape({
+      category_name: PropTypes.string.isRequired,
+    }).isRequired,
+  }).isRequired,
+};
+
+export default ProductCard;
+
+
+
+
+src/pages/ProductListPage.jsx (new)
+
+import { useEffect, useState } from "react";
+
+import SearchBar from "../components/products/SearchBar.jsx";
+import ProductCard from "../components/products/ProductCard.jsx";
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getProducts } from "../services/productService.js";
+
+// Milestone 2: Product listing with search by name or category
+function ProductListPage() {
+  const [products, setProducts] = useState([]);     // all products from the backend
+  const [searchText, setSearchText] = useState(""); // what the user types
+  const [error, setError] = useState("");
+
+  // Load all products once, when the page opens
+  useEffect(() => {
+    getProducts()
+      .then((data) => setProducts(data))
+      .catch((err) => setError(err.message));
+  }, []);
+
+  // Filter as the user types: keep products whose name OR category contains the text.
+  // (An empty search matches everything, so all products show.)
+  const search = searchText.trim().toLowerCase();
+  const filteredProducts = products.filter(
+    (product) =>
+      product.product_name.toLowerCase().includes(search) ||
+      product.category.category_name.toLowerCase().includes(search)
+  );
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Products</h1>
+
+      <SearchBar value={searchText} onChange={setSearchText} />
+      <AlertMessage type="danger" message={error} />
+
+      {filteredProducts.length === 0 ? (
+        !error && <p>No products found.</p>
+      ) : (
+        // Grid: 1 card per row on phones, 2 on tablets, 3 on laptops
+        <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
+          {filteredProducts.map((product) => (
+            <div className="col" key={product.product_id}>
+              <ProductCard product={product} />
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default ProductListPage;
+
+
+src/pages/ProductDetailsPage.jsx (new)
+
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getProductById } from "../services/productService.js";
+
+// Milestone 2: Detailed information about one product
+function ProductDetailsPage() {
+  const { productId } = useParams(); // the ":productId" part of the URL
+  const [product, setProduct] = useState(null);
+  const [error, setError] = useState("");
+
+  // Load this product when the page opens
+  useEffect(() => {
+    getProductById(productId)
+      .then((data) => setProduct(data))
+      .catch((err) => setError(err.message)); // e.g. 404 "Product not found."
+  }, [productId]);
+
+  if (error) return <AlertMessage type="danger" message={error} />;
+  if (!product) return null; // the data hasn't arrived yet
+
+  const inStock = product.available_quantity > 0;
+
+  return (
+    <>
+      <Link to="/products">Back to products</Link>
+
+      <h1 className="h3 mt-3">{product.product_name}</h1>
+      <p className="text-secondary">{product.category.category_name}</p>
+      <p className="fs-4 fw-bold">₹{product.price}</p>
+      {/* No blank fields: show a fallback if there's no description */}
+      <p>{product.description || "No description available."}</p>
+      <p>{inStock ? `In stock: ${product.available_quantity}` : "Out of Stock"}</p>
+
+      {/* Connected to the cart in Milestone 3 */}
+      <button type="button" className="btn btn-dark" disabled={!inStock}>
+        {inStock ? "Add to Cart" : "Out of Stock"}
+      </button>
+    </>
+  );
+}
+
+export default ProductDetailsPage;
+
+
