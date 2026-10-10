@@ -1,0 +1,91 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getCartItems } from "../services/cartService.js";
+import { placeOrder } from "../services/orderService.js";
+
+// Milestone 5: Review the order, choose payment, place the order
+function CheckoutPage() {
+  const navigate = useNavigate();
+
+  const [items, setItems] = useState([]);                 // cart items
+  const [paymentMethod, setPaymentMethod] = useState(""); // chosen payment
+  const [placing, setPlacing] = useState(false);          // true while placing
+  const [error, setError] = useState("");
+
+  // Load the cart once, to review it
+  useEffect(() => {
+    getCartItems()
+      .then((data) => setItems(data))
+      .catch((err) => setError(err.message));
+  }, []);
+
+  // Total = price × quantity of every item, added together
+  const total = items.reduce((sum, item) => sum + Number(item.product.price) * item.quantity, 0);
+
+  const handlePlaceOrder = async () => {
+    setPlacing(true);
+    setError("");
+    try {
+      const order = await placeOrder(paymentMethod);
+      // Show the new order, with a success message
+      navigate(`/orders/${order.order_id}`, { state: { success: "Order placed successfully." } });
+    } catch (err) {
+      setError(err.message);
+      setPlacing(false);
+    }
+  };
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Checkout</h1>
+      <AlertMessage type="danger" message={error} />
+
+      {/* Review the order */}
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Qty</th>
+            <th>Price</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.cart_item_id}>
+              <td>{item.product.product_name}</td>
+              <td>{item.quantity}</td>
+              <td>₹{item.product.price}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="fw-bold">Total: ₹{total.toFixed(2)}</p>
+
+      {/* Choose a payment method (the backend expects these values) */}
+      <select
+        className="form-select mb-3"
+        style={{ maxWidth: "300px" }}
+        value={paymentMethod}
+        onChange={(event) => setPaymentMethod(event.target.value)}
+      >
+        <option value="">Choose a payment method</option>
+        <option value="CREDIT_CARD">Credit Card</option>
+        <option value="CASH_ON_DELIVERY">Cash on Delivery</option>
+      </select>
+
+      {/* Enabled only when the cart has items and a payment is chosen */}
+      <button
+        type="button"
+        className="btn btn-dark"
+        disabled={items.length === 0 || !paymentMethod || placing}
+        onClick={handlePlaceOrder}
+      >
+        {placing ? "Placing order..." : "Place order"}
+      </button>
+    </>
+  );
+}
+
+export default CheckoutPage;
