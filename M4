@@ -1,0 +1,348 @@
+src/services/orderService.js (new)
+
+// Calls for orders. All need the token.
+import { apiRequest } from "./apiClient.js";
+
+/** The logged-in user's own orders */
+export const getMyOrders = () => apiRequest("/api/orders/me", { auth: true });
+
+/** One of my orders, with all its products (404 if it isn't mine) */
+export const getOrderDetails = (orderId) => apiRequest(`/api/orders/details/${orderId}`, { auth: true });
+
+/** Cancel one of my orders (the backend puts the stock back) */
+export const cancelOrder = (orderId) => apiRequest(`/api/orders/${orderId}/cancel`, { method: "POST", auth: true });
+
+/** Every customer's orders: admin and support only (403 for customers) */
+export const getAllOrders = () => apiRequest("/api/admin/orders", { auth: true });
+
+
+
+
+
+src/components/orders/OrderItemsTable.jsx (new folder orders)
+
+import PropTypes from "prop-types";
+
+// Products of one order: name, quantity, price, subtotal, and the total
+function OrderItemsTable({ details, total }) {
+  return (
+    <div className="table-responsive">
+      <table className="table mb-0">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Qty</th>
+            <th>Price</th>
+            <th className="text-end">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {details.map((line) => (
+            <tr key={line.order_detail_id}>
+              <td>{line.product.product_name}</td>
+              <td>{line.quantity}</td>
+              {/* price = the price paid on the order day */}
+              <td>₹{line.price}</td>
+              <td className="text-end">₹{(Number(line.price) * line.quantity).toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <th colSpan={3} className="text-end">Total</th>
+            <th className="text-end">₹{total}</th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+OrderItemsTable.propTypes = {
+  details: PropTypes.arrayOf(
+    PropTypes.shape({
+      order_detail_id: PropTypes.number.isRequired,
+      quantity: PropTypes.number.isRequired,
+      price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+      product: PropTypes.shape({ product_name: PropTypes.string.isRequired }).isRequired,
+    })
+  ).isRequired,
+  total: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+};
+
+export default OrderItemsTable;
+
+
+
+3. src/pages/OrderHistoryPage.jsx (new)
+
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getMyOrders } from "../services/orderService.js";
+
+// Milestone 4: My orders (the backend returns only the logged-in user's orders)
+function OrderHistoryPage() {
+  const [orders, setOrders] = useState(null); // null = not loaded yet
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    getMyOrders()
+      // Newest first ([...data] copies the list before sorting)
+      .then((data) => setOrders([...data].sort((a, b) => b.order_id - a.order_id)))
+      .catch((err) => setError(err.message));
+  }, []);
+
+  if (error) return <AlertMessage type="danger" message={error} />;
+  if (!orders) return null;
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Order History</h1>
+
+      {orders.length === 0 ? (
+        <p>No orders found.</p>
+      ) : (
+        <div className="table-responsive">
+          <table className="table align-middle">
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Date</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((order) => (
+                <tr key={order.order_id}>
+                  <td>#{order.order_id}</td>
+                  <td>{new Date(order.order_date).toLocaleDateString("en-IN")}</td>
+                  <td>₹{order.total_amount}</td>
+                  <td className="text-capitalize">{order.status}</td>
+                  <td className="text-end">
+                    <Link to={`/orders/${order.order_id}`} className="btn btn-outline-dark btn-sm">
+                      View details
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default OrderHistoryPage;
+
+
+
+
+
+
+4. src/pages/OrderDetailsPage.jsx (new)
+
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import OrderItemsTable from "../components/orders/OrderItemsTable.jsx";
+import { cancelOrder, getOrderDetails } from "../services/orderService.js";
+
+// Milestone 4: One order with all products, quantities, and prices (+ cancel from the backend)
+function OrderDetailsPage() {
+  const { orderId } = useParams();
+  const [order, setOrder] = useState(null);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    getOrderDetails(orderId)
+      .then((data) => setOrder(data))
+      // 404 also means "not your order" (the backend hides other people's orders)
+      .catch((err) => setError(err.message));
+  }, [orderId]);
+
+  const handleCancel = async () => {
+    if (!window.confirm(`Cancel order #${order.order_id}?`)) return;
+    setError("");
+    try {
+      const updated = await cancelOrder(order.order_id);
+      setOrder(updated); // shows the new "cancelled" status
+      setMessage("Your order was cancelled.");
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  if (!order) return <AlertMessage type="danger" message={error} />;
+
+  return (
+    <>
+      <Link to="/orders">Back to my orders</Link>
+
+      <div className="mt-3">
+        <AlertMessage type="success" message={message} />
+        <AlertMessage type="danger" message={error} />
+      </div>
+
+      <h1 className="h3">Order #{order.order_id}</h1>
+      <p className="text-secondary">
+        Date: {new Date(order.order_date).toLocaleDateString("en-IN")} | Payment:{" "}
+        {order.payment_method.replaceAll("_", " ")} | Status: <span className="text-capitalize">{order.status}</span>
+      </p>
+
+      <OrderItemsTable details={order.details} total={order.total_amount} />
+
+      {order.status !== "cancelled" && (
+        <button type="button" className="btn btn-outline-danger mt-3" onClick={handleCancel}>
+          Cancel order
+        </button>
+      )}
+    </>
+  );
+}
+
+export default OrderDetailsPage;
+
+
+
+5. src/pages/AllOrdersPage.jsx (new, admin and support)
+
+import { useEffect, useState } from "react";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import OrderItemsTable from "../components/orders/OrderItemsTable.jsx";
+import { getAllOrders } from "../services/orderService.js";
+
+// Admin & Support: every customer's orders (backend policy "orders:view:all")
+function AllOrdersPage() {
+  const [orders, setOrders] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    getAllOrders()
+      .then((data) => setOrders(data)) // already newest first from the backend
+      .catch((err) => setError(err.message)); // a customer would get 403 here
+  }, []);
+
+  if (error) return <AlertMessage type="danger" message={error} />;
+  if (!orders) return null;
+
+  return (
+    <>
+      <h1 className="h3 mb-3">All Orders</h1>
+
+      {orders.length === 0 ? (
+        <p>No orders found.</p>
+      ) : (
+        orders.map((order) => (
+          <div className="card mb-3" key={order.order_id}>
+            {/* Who ordered, when, how they paid, and the status */}
+            <div className="card-header d-flex flex-wrap justify-content-between gap-2">
+              <span>
+                <strong>Order #{order.order_id}</strong> by {order.user.name} ({order.user.email})
+              </span>
+              <span>
+                {new Date(order.order_date).toLocaleDateString("en-IN")} | {order.payment_method.replaceAll("_", " ")} |{" "}
+                <span className="text-capitalize">{order.status}</span>
+              </span>
+            </div>
+            <div className="card-body">
+              <OrderItemsTable details={order.details} total={order.total_amount} />
+            </div>
+          </div>
+        ))
+      )}
+    </>
+  );
+}
+
+export default AllOrdersPage;
+
+
+
+6. src/components/common/ProtectedRoute.jsx (replace everything)
+
+import { Navigate, useLocation } from "react-router-dom";
+import PropTypes from "prop-types";
+
+import Loader from "./Loader.jsx";
+import AlertMessage from "./AlertMessage.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
+
+/**
+ * Wraps pages that need a login.
+ * roles (optional): only these roles may open the page, like the backend's 403 rule.
+ */
+function ProtectedRoute({ children, roles = [] }) {
+  const { isLoggedIn, loading, user } = useAuth();
+  const location = useLocation();
+
+  if (loading) return <Loader text="Checking your login..." />;
+
+  // Not logged in → Login page (then back here)
+  if (!isLoggedIn) {
+    return <Navigate to="/login" replace state={{ from: location.pathname, message: "Please log in to continue." }} />;
+  }
+
+  // Logged in, but this role isn't allowed (the backend would also answer 403)
+  if (roles.length > 0 && !roles.includes(user.role)) {
+    return <AlertMessage type="danger" message="You don't have permission to view this page." />;
+  }
+
+  return children;
+}
+
+ProtectedRoute.propTypes = {
+  children: PropTypes.node.isRequired,
+  roles: PropTypes.arrayOf(PropTypes.oneOf(["customer", "admin", "support"])),
+};
+
+export default ProtectedRoute;
+
+
+
+
+7. src/components/layout/Menu.jsx (replace everything)
+
+import { NavLink } from "react-router-dom";
+
+import { useAuth } from "../../context/AuthContext.jsx";
+
+// Menu links. "roles" = only these roles see the link.
+const MENU_LINKS = [
+  { path: "/", label: "Home" },
+  { path: "/products", label: "Products" },
+  { path: "/cart", label: "Cart" },
+  { path: "/orders", label: "My Orders" },
+  { path: "/admin/orders", label: "All Orders", roles: ["admin", "support"] },
+];
+
+function Menu() {
+  const { user } = useAuth();
+
+  // Hide links this role can't use. (Hiding isn't security: the backend still checks.)
+  const visibleLinks = MENU_LINKS.filter((link) => !link.roles || (user && link.roles.includes(user.role)));
+
+  return (
+    <nav aria-label="Main menu">
+      <ul className="nav">
+        {visibleLinks.map((link) => (
+          <li className="nav-item" key={link.path}>
+            <NavLink to={link.path} end={link.path === "/"} className="nav-link text-dark">
+              {link.label}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+export default Menu;
+
