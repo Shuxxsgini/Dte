@@ -1,0 +1,125 @@
+src/services/orderService.js (add at the bottom)
+
+/**
+ * Place an order from everything in the cart.
+ * The backend checks stock, creates the order, reduces stock, and empties the cart.
+ * @param {"CREDIT_CARD"|"CASH_ON_DELIVERY"} paymentMethod
+ */
+export const placeOrder = (paymentMethod) =>
+  apiRequest("/api/orders/checkout", { method: "POST", body: { payment_method: paymentMethod }, auth: true });
+
+
+
+
+src/pages/CheckoutPage.jsx (new)
+
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import OrderItemsTable from "../components/orders/OrderItemsTable.jsx";
+import { getCartItems, getCartSummary } from "../services/cartService.js";
+import { placeOrder } from "../services/orderService.js";
+
+// The two payment methods from the PDF.
+// value = what the backend expects, label = what the user sees.
+const PAYMENT_METHODS = [
+  { value: "CREDIT_CARD", label: "Credit Card" },
+  { value: "CASH_ON_DELIVERY", label: "Cash on Delivery" },
+];
+
+// Milestone 5: Review the order, choose payment, place the order
+function CheckoutPage() {
+  const navigate = useNavigate();
+
+  const [items, setItems] = useState(null); // cart items (null = not loaded yet)
+  const [total, setTotal] = useState("0");
+  const [paymentMethod, setPaymentMethod] = useState(""); // nothing chosen yet
+  const [placing, setPlacing] = useState(false); // true while the request runs
+  const [error, setError] = useState("");
+
+  // Load the cart to review it
+  useEffect(() => {
+    Promise.all([getCartItems(), getCartSummary()])
+      .then(([cartItems, summary]) => {
+        setItems(cartItems);
+        setTotal(summary.total_amount);
+      })
+      .catch((err) => setError(err.message));
+  }, []);
+
+  const handlePlaceOrder = async (event) => {
+    event.preventDefault();
+    setPlacing(true);
+    setError("");
+    try {
+      const order = await placeOrder(paymentMethod);
+      // Go to the new order's details page with a success message
+      navigate(`/orders/${order.order_id}`, {
+        replace: true,
+        state: { success: `Order #${order.order_id} placed successfully.` },
+      });
+    } catch (err) {
+      setError(err.message); // e.g. "Only 2 'Apron' in stock"
+      setPlacing(false);
+    }
+  };
+
+  if (!items) return <AlertMessage type="danger" message={error} />;
+
+  if (items.length === 0) {
+    return (
+      <p>
+        Your cart is empty. <Link to="/products">Browse products</Link>
+      </p>
+    );
+  }
+
+  // Shape cart items like order lines, so we can reuse OrderItemsTable
+  const lines = items.map((item) => ({
+    order_detail_id: item.cart_item_id,
+    quantity: item.quantity,
+    price: item.product.price,
+    product: { product_name: item.product.product_name },
+  }));
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Checkout</h1>
+      <AlertMessage type="danger" message={error} />
+
+      <h2 className="h5">Review your order</h2>
+      <OrderItemsTable details={lines} total={total} />
+
+      <form onSubmit={handlePlaceOrder} className="mt-4" style={{ maxWidth: "400px" }}>
+        <label htmlFor="payment-method" className="form-label fw-semibold">
+          Payment method
+        </label>
+        <select
+          id="payment-method"
+          className="form-select mb-3"
+          value={paymentMethod}
+          onChange={(event) => setPaymentMethod(event.target.value)}
+        >
+          <option value="">Choose a payment method</option>
+          {PAYMENT_METHODS.map((method) => (
+            <option key={method.value} value={method.value}>
+              {method.label}
+            </option>
+          ))}
+        </select>
+
+        {/* Enabled only when a payment method is chosen; disabled while placing */}
+        <button type="submit" className="btn btn-dark w-100" disabled={!paymentMethod || placing}>
+          {placing ? "Placing order..." : "Place order"}
+        </button>
+      </form>
+    </>
+  );
+}
+
+export default CheckoutPage;
+
+
+
+
