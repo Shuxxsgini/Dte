@@ -1,0 +1,57 @@
+import { Link } from "react-router-dom";
+import PropTypes from "prop-types";
+
+// Only show product_url as a picture if it ends like an image file.
+// (Some seeded products still have a web page link there.)
+const isImage = (url) => Boolean(url) && /\.(jpg|jpeg|png|webp)$/i.test(url);
+
+// One product card: picture, name, category, price, Add to Cart
+function ProductCard({ product, onAddToCart }) {
+  const inStock = product.available_quantity > 0;
+
+  return (
+    <div className="card h-100">
+      {/* Picture at the top of the card (only if the product has one) */}
+      {isImage(product.product_url) && (
+        <img src={product.product_url} alt={product.product_name} className="card-img-top product-image" />
+      )}
+
+      <div className="card-body d-flex flex-column">
+        <h5 className="card-title">
+          <Link to={`/products/${product.product_id}`} className="text-dark">
+            {product.product_name}
+          </Link>
+        </h5>
+        <p className="text-secondary mb-2">{product.category.category_name}</p>
+        <p className="fw-bold mt-auto">₹{product.price}</p>
+
+        {/* Enabled only if in stock; otherwise show "Out of Stock" */}
+        {inStock ? (
+          <button type="button" className="btn btn-dark" onClick={() => onAddToCart(product)}>
+            Add to Cart
+          </button>
+        ) : (
+          <button type="button" className="btn btn-secondary" disabled>
+            Out of Stock
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ProductCard.propTypes = {
+  product: PropTypes.shape({
+    product_id: PropTypes.number.isRequired,
+    product_name: PropTypes.string.isRequired,
+    price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    available_quantity: PropTypes.number.isRequired,
+    product_url: PropTypes.string, // can be null
+    category: PropTypes.shape({
+      category_name: PropTypes.string.isRequired,
+    }).isRequired,
+  }).isRequired,
+  onAddToCart: PropTypes.func.isRequired,
+};
+
+export default ProductCard;
