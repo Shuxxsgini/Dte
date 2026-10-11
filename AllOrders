@@ -1,0 +1,70 @@
+Step 2: Replace src/pages/AllOrdersPage.jsx
+
+import { useEffect, useState } from "react";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import OrderItemsTable from "../components/orders/OrderItemsTable.jsx";
+import { getAllOrders } from "../services/orderService.js";
+
+// Admin & Support: every customer's orders, placed AND cancelled
+function AllOrdersPage() {
+  const [orders, setOrders] = useState(null); // null = not loaded yet
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    getAllOrders() // GET /api/admin/orders (403 for customers)
+      .then((data) => setOrders(Array.isArray(data) ? data : [])) // accept only a real list
+      .catch((err) => setError(err.message));
+  }, []);
+
+  if (error) return <AlertMessage type="danger" message={error} />;
+  if (!orders) return null; // still loading
+
+  // Count how many are cancelled (filter keeps only matching orders)
+  const cancelledCount = orders.filter((order) => order.status === "cancelled").length;
+
+  return (
+    <>
+      <h1 className="h3 mb-1">All Orders</h1>
+      <p className="text-secondary">
+        {orders.length} orders in total, {cancelledCount} cancelled
+      </p>
+
+      {orders.length === 0 ? (
+        <p>No orders found.</p>
+      ) : (
+        orders.map((order) => (
+          <div className="card mb-3" key={order.order_id}>
+            <div className="card-header d-flex flex-wrap justify-content-between gap-2">
+              {/* Who placed it. ?. and ?? = safe fallbacks if "user" is missing */}
+              <span>
+                <strong>Order #{order.order_id}</strong> by {order.user?.name ?? "Unknown"} | User ID:{" "}
+                {order.user_id} | {order.user?.email ?? "no email"}
+              </span>
+
+              {/* When, how they paid, and the status badge */}
+              <span>
+                {new Date(order.order_date).toLocaleDateString("en-IN")} |{" "}
+                {order.payment_method.replaceAll("_", " ")} |{" "}
+                <span
+                  className={`badge text-capitalize ${
+                    order.status === "cancelled" ? "text-bg-secondary" : "text-bg-success"
+                  }`}
+                >
+                  {order.status}
+                </span>
+              </span>
+            </div>
+
+            {/* What they ordered: products, qty, price, subtotal, total */}
+            <div className="card-body">
+              <OrderItemsTable details={order.details} total={order.total_amount} />
+            </div>
+          </div>
+        ))
+      )}
+    </>
+  );
+}
+
+export default AllOrdersPage;
