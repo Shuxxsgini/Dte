@@ -1,0 +1,62 @@
+import { Link } from "react-router-dom";
+import PropTypes from "prop-types";
+
+// Picture for each product, matched by its exact name.
+// The files live in frontend/public/images/, so the path starts with /images/
+const PRODUCT_IMAGES = {
+  "Wireless headphones": "/images/headphones.jpg",
+  "Haunting Adeline": "/images/books.jpg",
+  "Wide legs Jeans": "/images/jeans.jpg",
+  Apron: "/images/apron.jpg",
+};
+
+// One product card: picture, name, category, price, Add to Cart (+ count badge)
+function ProductCard({ product, onAddToCart, addedCount = 0 }) {
+  const inStock = product.available_quantity > 0;
+  const imageSrc = PRODUCT_IMAGES[product.product_name]; // undefined if the name isn't in the list
+
+  return (
+    <div className="card h-100">
+      {/* Show the picture only if this product has one in the list above */}
+      {imageSrc && <img src={imageSrc} alt={product.product_name} className="card-img-top product-image" />}
+
+      <div className="card-body d-flex flex-column">
+        <h5 className="card-title">
+          <Link to={`/products/${product.product_id}`} className="text-dark">
+            {product.product_name}
+          </Link>
+        </h5>
+        <p className="text-secondary mb-2">{product.category.category_name}</p>
+        <p className="fw-bold mt-auto">₹{product.price}</p>
+
+        {inStock ? (
+          <div className="d-flex align-items-center gap-2">
+            <button type="button" className="btn btn-dark flex-grow-1" onClick={() => onAddToCart(product)}>
+              Add to Cart
+            </button>
+            {/* +1, +2... after each successful add */}
+            {addedCount > 0 && <span className="badge text-bg-success fs-6">+{addedCount}</span>}
+          </div>
+        ) : (
+          <button type="button" className="btn btn-secondary" disabled>
+            Out of Stock
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ProductCard.propTypes = {
+  product: PropTypes.shape({
+    product_id: PropTypes.number.isRequired,
+    product_name: PropTypes.string.isRequired,
+    price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    available_quantity: PropTypes.number.isRequired,
+    category: PropTypes.shape({ category_name: PropTypes.string.isRequired }).isRequired,
+  }).isRequired,
+  onAddToCart: PropTypes.func.isRequired,
+  addedCount: PropTypes.number,
+};
+
+export default ProductCard;
