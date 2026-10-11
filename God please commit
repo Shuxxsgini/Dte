@@ -1,0 +1,728 @@
+B1. src/services/orderService.js (new or replace)
+
+// All order calls to the backend. Every one needs the login token (auth: true).
+import { apiRequest } from "./apiClient.js"; // our single helper that talks to FastAPI
+
+// IMPORTANT: a URL with ${...} MUST use backticks ` ` (key under Esc), NOT quotes " ".
+// Backticks fill in the value: `/details/${orderId}` → "/details/6"
+
+/** Place an order from the cart. paymentMethod = "CREDIT_CARD" or "CASH_ON_DELIVERY" */
+export const placeOrder = (paymentMethod) =>
+  apiRequest("/api/orders/checkout", {
+    method: "POST", // POST = create something new
+    body: { payment_method: paymentMethod }, // matches the backend's CheckOutRequest
+    auth: true, // adds "Authorization: Bearer <token>"
+  });
+
+/** My own orders only (the backend reads "who am I" from the token) */
+export const getMyOrders = () => apiRequest("/api/orders/me", { auth: true });
+
+/** One of my orders with all its products (404 if it isn't mine) */
+export const getOrderDetails = (orderId) =>
+  apiRequest(`/api/orders/details/${orderId}`, { auth: true }); // backticks!
+
+/** Cancel one of my orders (the backend sets status "cancelled" and returns stock) */
+export const cancelOrder = (orderId) =>
+  apiRequest(`/api/orders/${orderId}/cancel`, { method: "POST", auth: true }); // backticks!
+
+/** Every customer's orders: admin & support only (a customer gets 403) */
+export const getAllOrders = () => apiRequest("/api/admin/orders", { auth: true });
+
+
+
+
+B2. src/components/products/ProductCard.jsx (replace: adds the picture and the +1 badge)
+
+import { Link } from "react-router-dom"; // Link = page change without reloading
+import PropTypes from "prop-types"; // checks the data type of each prop
+
+// true only if the URL ends like a picture file (.jpg, .png...). /i = ignore upper/lower case
+const isImage = (url) => Boolean(url) && /\.(jpg|jpeg|png|webp)$/i.test(url);
+
+// One product card. Props come from ProductListPage.
+function ProductCard({ product, onAddToCart, addedCount = 0 }) {
+  const inStock = product.available_quantity > 0; // true/false
+
+  return (
+    <div className="card h-100">
+      {/* && = "only show this if the left side is true" */}
+      {isImage(product.product_url) && (
+        <img src={product.product_url} alt={product.product_name} className="card-img-top product-image" />
+      )}
+
+      <div className="card-body d-flex flex-column">
+        <h5 className="card-title">
+          {/* Clicking the name opens /products/<id> */}
+          <Link to={`/products/${product.product_id}`} className="text-dark">
+            {product.product_name}
+          </Link>
+        </h5>
+        <p className="text-secondary mb-2">{product.category.category_name}</p>
+        <p className="fw-bold mt-auto">₹{product.price}</p>
+
+        {/* condition ? (if true) : (if false) */}
+        {inStock ? (
+          <div className="d-flex align-items-center gap-2">
+            {/* () => ... = run onAddToCart only when clicked */}
+            <button type="button" className="btn btn-dark flex-grow-1" onClick={() => onAddToCart(product)}>
+              Add to Cart
+            </button>
+            {/* The +1, +2... badge, shown after the first successful add */}
+            {addedCount > 0 && <span className="badge text-bg-success fs-6">+{addedCount}</span>}
+          </div>
+        ) : (
+          <button type="button" className="btn btn-secondary" disabled>
+            Out of Stock
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// The data types this component expects
+ProductCard.propTypes = {
+  product: PropTypes.shape({
+    product_id: PropTypes.number.isRequired,
+    product_name: PropTypes.string.isRequired,
+    price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired, // backend sends "1000.00"
+    available_quantity: PropTypes.number.isRequired,
+    product_url: PropTypes.string, // optional (can be null)
+    category: PropTypes.shape({ category_name: PropTypes.string.isRequired }).isRequired,
+  }).isRequired,
+  onAddToCart: PropTypes.func.isRequired,
+  addedCount: PropTypes.number,
+};
+
+export default ProductCard;
+
+
+
+
+B3. src/pages/ProductListPage.jsx (replace: adds the badge counter)
+
+import { useEffect, useState } from "react"; // useState = memory, useEffect = run code after drawing
+import { useNavigate } from "react-router-dom"; // useNavigate = go to another page from code
+
+import SearchBar from "../components/products/SearchBar.jsx";
+import ProductCard from "../components/products/ProductCard.jsx";
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getProducts } from "../services/productService.js";
+import { addToCart } from "../services/cartService.js";
+import { useAuth } from "../context/AuthContext.jsx";
+
+// Milestones 2 + 3: product list, search by name/category, Add to Cart
+function ProductListPage() {
+  const navigate = useNavigate();
+  const { isLoggedIn } = useAuth(); // true if someone is logged in
+
+  const [products, setProducts] = useState([]); // [] = empty list (NOT null) so .filter never crashes
+  const [searchText, setSearchText] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [addedCounts, setAddedCounts] = useState({}); // { product_id: times added }, e.g. { 4: 2 }
+
+  // [] at the end = run once, when the page opens
+  useEffect(() => {
+    getProducts()
+      .then((data) => setProducts(Array.isArray(data) ? data : [])) // accept only a real list
+      .catch((err) => setError(err.message));
+  }, []);
+
+  // Search: keep products whose name OR category contains the typed text
+  const search = searchText.trim().toLowerCase(); // trim = remove spaces at the ends
+  const filteredProducts = products.filter(
+    (product) =>
+      product.product_name.toLowerCase().includes(search) ||
+      product.category.category_name.toLowerCase().includes(search) // || = OR
+  );
+
+  // async = this function waits (await) for the backend
+  const handleAddToCart = async (product) => {
+    if (!isLoggedIn) {
+      // ! = NOT. Cart needs login → go to Login, then come back to /products
+      navigate("/login", { state: { from: "/products", message: "Please log in to add items to your cart." } });
+      return; // stop here
+    }
+
+    setError("");
+    try {
+      await addToCart(product.product_id, 1); // POST /api/cart/add
+      // Count +1 for this product. ?? 0 = "use 0 if there's no number yet"
+      setAddedCounts((prev) => ({ ...prev, [product.product_id]: (prev[product.product_id] ?? 0) + 1 }));
+      setMessage(`${product.product_name} was added to your cart.`);
+    } catch (err) {
+      setMessage("");
+      setError(err.message); // e.g. "Only 5 'Apron' in stock."
+    }
+  };
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Products</h1>
+
+      <SearchBar value={searchText} onChange={setSearchText} />
+      <AlertMessage type="success" message={message} />
+      <AlertMessage type="danger" message={error} />
+
+      {filteredProducts.length === 0 ? (
+        !error && <p>No products found.</p>
+      ) : (
+        // Grid: 1 card per row on phones, 2 on tablets, 3 on laptops
+        <div className="row row-cols-1 row-cols-sm-2 row-cols-lg-3 g-4">
+          {/* .map = turn each product into a card. key = unique id React needs */}
+          {filteredProducts.map((product) => (
+            <div className="col" key={product.product_id}>
+              <ProductCard
+                product={product}
+                onAddToCart={handleAddToCart}
+                addedCount={addedCounts[product.product_id] ?? 0}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+export default ProductListPage;
+
+
+
+
+B4. src/index.css (add at the bottom, if it isn't there yet)
+
+/* Same picture height on every card. contain = whole picture, no stretching */
+.product-image {
+  height: 200px;
+  object-fit: contain;
+  padding: 12px;
+}
+
+
+B5. src/components/orders/OrderItemsTable.jsx (new folder orders)
+
+import PropTypes from "prop-types";
+
+// Table of products: name, qty, price, subtotal + total. Reused on 3 pages.
+function OrderItemsTable({ details, total }) {
+  return (
+    <div className="table-responsive">
+      <table className="table mb-0">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Qty</th>
+            <th>Price</th>
+            <th className="text-end">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {details.map((line) => (
+            <tr key={line.order_detail_id}>
+              <td>{line.product.product_name}</td>
+              <td>{line.quantity}</td>
+              <td>₹{line.price}</td>
+              {/* Number() turns "100.00" into 100. toFixed(2) = always 2 decimals */}
+              <td className="text-end">₹{(Number(line.price) * line.quantity).toFixed(2)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            {/* colSpan={3} = this cell spans 3 columns */}
+            <th colSpan={3} className="text-end">Total</th>
+            <th className="text-end">₹{total}</th>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
+OrderItemsTable.propTypes = {
+  // arrayOf = a list where every item has this shape
+  details: PropTypes.arrayOf(
+    PropTypes.shape({
+      order_detail_id: PropTypes.number.isRequired,
+      quantity: PropTypes.number.isRequired,
+      price: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+      product: PropTypes.shape({ product_name: PropTypes.string.isRequired }).isRequired,
+    })
+  ).isRequired,
+  total: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+};
+
+export default OrderItemsTable;
+
+
+
+
+B6. src/pages/CheckoutPage.jsx (new) — Milestone 5
+
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import OrderItemsTable from "../components/orders/OrderItemsTable.jsx";
+import { getCartItems, getCartSummary } from "../services/cartService.js";
+import { placeOrder } from "../services/orderService.js";
+
+// The 2 payment methods from the PDF. value = what the backend expects, label = what users see
+const PAYMENT_METHODS = [
+  { value: "CREDIT_CARD", label: "Credit Card" },
+  { value: "CASH_ON_DELIVERY", label: "Cash on Delivery" },
+];
+
+// Milestone 5: review the order, choose payment, place the order
+function CheckoutPage() {
+  const navigate = useNavigate();
+
+  const [items, setItems] = useState(null); // null = "not loaded yet"
+  const [total, setTotal] = useState("0");
+  const [paymentMethod, setPaymentMethod] = useState(""); // "" = nothing chosen
+  const [placing, setPlacing] = useState(false); // true while the request runs
+  const [error, setError] = useState("");
+
+  // Load the cart once. Promise.all = run both requests at the same time
+  useEffect(() => {
+    Promise.all([getCartItems(), getCartSummary()])
+      .then(([cartItems, summary]) => {
+        // [a, b] = take the two answers in order
+        setItems(cartItems);
+        setTotal(summary.total_amount);
+      })
+      .catch((err) => setError(err.message));
+  }, []);
+
+  const handlePlaceOrder = async (event) => {
+    event.preventDefault(); // stop the browser from reloading the page on submit
+    setPlacing(true);
+    setError("");
+    try {
+      // Backend: checks stock, creates the order, lowers stock, empties the cart
+      const order = await placeOrder(paymentMethod);
+      // Go to the new order's page and pass a success message along
+      navigate(`/orders/${order.order_id}`, {
+        replace: true, // Back button won't return to the (now empty) checkout
+        state: { success: `Order #${order.order_id} placed successfully.` },
+      });
+    } catch (err) {
+      setError(err.message); // e.g. "Only 2 'Apron' in stock"
+      setPlacing(false);
+    }
+  };
+
+  // Still loading (or failed): show only the error, if any
+  if (!items) return <AlertMessage type="danger" message={error} />;
+
+  if (items.length === 0) {
+    return (
+      <p>
+        Your cart is empty. <Link to="/products">Browse products</Link>
+      </p>
+    );
+  }
+
+  // Reshape cart items to look like order lines, so OrderItemsTable can show them
+  const lines = items.map((item) => ({
+    order_detail_id: item.cart_item_id,
+    quantity: item.quantity,
+    price: item.product.price,
+    product: { product_name: item.product.product_name },
+  }));
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Checkout</h1>
+      <AlertMessage type="danger" message={error} />
+
+      <h2 className="h5">Review your order</h2>
+      <OrderItemsTable details={lines} total={total} />
+
+      {/* onSubmit runs when the button is clicked (or Enter is pressed) */}
+      <form onSubmit={handlePlaceOrder} className="mt-4" style={{ maxWidth: "400px" }}>
+        <label htmlFor="payment-method" className="form-label fw-semibold">
+          Payment method
+        </label>
+        <select
+          id="payment-method"
+          className="form-select mb-3"
+          value={paymentMethod}
+          onChange={(event) => setPaymentMethod(event.target.value)} // save the chosen option
+        >
+          <option value="">Choose a payment method</option>
+          {PAYMENT_METHODS.map((method) => (
+            <option key={method.value} value={method.value}>
+              {method.label}
+            </option>
+          ))}
+        </select>
+
+        {/* Enabled only when a method is chosen; disabled while placing */}
+        <button type="submit" className="btn btn-dark w-100" disabled={!paymentMethod || placing}>
+          {placing ? "Placing order..." : "Place order"}
+        </button>
+      </form>
+    </>
+  );
+}
+
+export default CheckoutPage;
+
+
+
+
+B7. src/pages/OrderHistoryPage.jsx (new) — Milestone 4
+
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import { getMyOrders } from "../services/orderService.js";
+
+// Milestone 4: my orders only (the backend filters by the token's user)
+function OrderHistoryPage() {
+  const [orders, setOrders] = useState(null); // null = not loaded yet
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    getMyOrders()
+      // [...data] copies the list; sort b - a = biggest id (newest) first
+      .then((data) => setOrders([...data].sort((a, b) => b.order_id - a.order_id)))
+      .catch((err) => setError(err.message));
+  }, []);
+
+  if (error) return <AlertMessage type="danger" message={error} />;
+  if (!orders) return null; // nothing to draw until the data arrives
+
+  return (
+    <>
+      <h1 className="h3 mb-3">Order History</h1>
+
+      {orders.length === 0 ? (
+        <p>No orders found.</p> // exact message from the PDF
+      ) : (
+        <div className="table-responsive">
+          <table className="table align-middle">
+            <thead>
+              <tr>
+                <th>Order</th>
+                <th>Date</th>
+                <th>Total</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {orders.map((order) => (
+                <tr key={order.order_id}>
+                  <td>#{order.order_id}</td>
+                  {/* new Date(...) reads the date; toLocaleDateString shows it as dd/mm/yyyy */}
+                  <td>{new Date(order.order_date).toLocaleDateString("en-IN")}</td>
+                  <td>₹{order.total_amount}</td>
+                  <td>
+                    {/* Grey badge if cancelled, green otherwise */}
+                    <span className={`badge text-capitalize ${order.status === "cancelled" ? "text-bg-secondary" : "text-bg-success"}`}>
+                      {order.status}
+                    </span>
+                  </td>
+                  <td className="text-end">
+                    <Link to={`/orders/${order.order_id}`} className="btn btn-outline-dark btn-sm">
+                      View details
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default OrderHistoryPage;
+
+
+
+
+B8. src/pages/OrderDetailsPage.jsx (new) — Milestone 4, plus cancel
+
+import { useEffect, useState } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import OrderItemsTable from "../components/orders/OrderItemsTable.jsx";
+import { cancelOrder, getOrderDetails } from "../services/orderService.js";
+
+// One order: products, qty, prices, total, status + Cancel
+function OrderDetailsPage() {
+  const { orderId } = useParams(); // reads ":orderId" from the URL. Must match App.jsx exactly!
+  const location = useLocation(); // gives the message sent by the Checkout page
+
+  const [order, setOrder] = useState(null);
+  const [error, setError] = useState("");
+  // ?. = "if it exists". Start with Checkout's success message, or "" if none
+  const [message, setMessage] = useState(location.state?.success ?? "");
+
+  // [orderId] = run again whenever the order number in the URL changes
+  useEffect(() => {
+    getOrderDetails(orderId)
+      .then((data) => setOrder(data))
+      .catch((err) => setError(err.message)); // 404 = not found or not yours
+  }, [orderId]);
+
+  const handleCancel = async () => {
+    // confirm() = browser's OK/Cancel box. Stop if the user clicks Cancel
+    if (!window.confirm(`Cancel order #${order.order_id}?`)) return;
+    setError("");
+    try {
+      const updated = await cancelOrder(order.order_id); // backend returns the updated order
+      setOrder(updated); // page redraws with status "cancelled"
+      setMessage("Your order was cancelled.");
+    } catch (err) {
+      setError(err.message); // e.g. "Order is already cancelled."
+    }
+  };
+
+  if (!order) return <AlertMessage type="danger" message={error} />;
+
+  return (
+    <>
+      <Link to="/orders">Back to my orders</Link>
+
+      <div className="mt-3">
+        <AlertMessage type="success" message={message} />
+        <AlertMessage type="danger" message={error} />
+      </div>
+
+      <h1 className="h3">Order #{order.order_id}</h1>
+      <p className="text-secondary">
+        {/* replaceAll("_", " ") turns CASH_ON_DELIVERY into CASH ON DELIVERY */}
+        Date: {new Date(order.order_date).toLocaleDateString("en-IN")} | Payment:{" "}
+        {order.payment_method.replaceAll("_", " ")} | Status:{" "}
+        <span className={`badge text-capitalize ${order.status === "cancelled" ? "text-bg-secondary" : "text-bg-success"}`}>
+          {order.status}
+        </span>
+      </p>
+
+      <OrderItemsTable details={order.details} total={order.total_amount} />
+
+      {/* !== = "is not". Only orders that aren't cancelled yet show the button */}
+      {order.status !== "cancelled" && (
+        <button type="button" className="btn btn-outline-danger mt-3" onClick={handleCancel}>
+          Cancel order
+        </button>
+      )}
+    </>
+  );
+}
+
+export default OrderDetailsPage;
+
+
+
+
+B9. src/pages/AllOrdersPage.jsx (new) — admin and support only
+
+import { useEffect, useState } from "react";
+
+import AlertMessage from "../components/common/AlertMessage.jsx";
+import OrderItemsTable from "../components/orders/OrderItemsTable.jsx";
+import { getAllOrders } from "../services/orderService.js";
+
+// Admin & Support: every customer's orders (backend policy "orders:view:all")
+function AllOrdersPage() {
+  const [orders, setOrders] = useState(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    getAllOrders()
+      .then((data) => setOrders(data)) // already newest first from the backend
+      .catch((err) => setError(err.message)); // a customer would get 403 here
+  }, []);
+
+  if (error) return <AlertMessage type="danger" message={error} />;
+  if (!orders) return null;
+
+  return (
+    <>
+      <h1 className="h3 mb-3">All Orders</h1>
+
+      {orders.length === 0 ? (
+        <p>No orders found.</p>
+      ) : (
+        // One card per order
+        orders.map((order) => (
+          <div className="card mb-3" key={order.order_id}>
+            <div className="card-header d-flex flex-wrap justify-content-between gap-2">
+              {/* order.user comes from AdminOrderResponse (backend Part A) */}
+              <span>
+                <strong>Order #{order.order_id}</strong> by {order.user.name} ({order.user.email})
+              </span>
+              <span>
+                {new Date(order.order_date).toLocaleDateString("en-IN")} | {order.payment_method.replaceAll("_", " ")} |{" "}
+                <span className="text-capitalize">{order.status}</span>
+              </span>
+            </div>
+            <div className="card-body">
+              <OrderItemsTable details={order.details} total={order.total_amount} />
+            </div>
+          </div>
+        ))
+      )}
+    </>
+  );
+}
+
+export default AllOrdersPage;
+
+
+
+
+
+B10. src/components/common/ProtectedRoute.jsx (replace: adds role checks)
+
+import { Navigate, useLocation } from "react-router-dom"; // Navigate = redirect while drawing
+import PropTypes from "prop-types";
+
+import Loader from "./Loader.jsx";
+import AlertMessage from "./AlertMessage.jsx";
+import { useAuth } from "../../context/AuthContext.jsx";
+
+// Guards pages. roles (optional) = only these roles may open the page (like the backend's 403)
+function ProtectedRoute({ children, roles = [] }) {
+  const { isLoggedIn, loading, user } = useAuth();
+  const location = useLocation();
+
+  // Still checking a saved token → wait
+  if (loading) return <Loader text="Checking your login..." />;
+
+  // Not logged in → Login page, remembering where we wanted to go
+  if (!isLoggedIn) {
+    return <Navigate to="/login" replace state={{ from: location.pathname, message: "Please log in to continue." }} />;
+  }
+
+  // Logged in but wrong role (includes = "is it in the list?")
+  if (roles.length > 0 && !roles.includes(user.role)) {
+    return <AlertMessage type="danger" message="You don't have permission to view this page." />;
+  }
+
+  return children; // allowed → show the page
+}
+
+ProtectedRoute.propTypes = {
+  children: PropTypes.node.isRequired, // node = anything React can draw
+  roles: PropTypes.arrayOf(PropTypes.oneOf(["customer", "admin", "support"])),
+};
+
+export default ProtectedRoute;
+
+
+
+B11. src/components/layout/Menu.jsx (replace: "All Orders" for admin and support)
+
+import { NavLink } from "react-router-dom"; // NavLink = Link that highlights the current page
+
+import { useAuth } from "../../context/AuthContext.jsx";
+
+// All menu links. roles = only these roles see the link
+const MENU_LINKS = [
+  { path: "/", label: "Home" },
+  { path: "/products", label: "Products" },
+  { path: "/cart", label: "Cart" },
+  { path: "/orders", label: "My Orders" },
+  { path: "/admin/orders", label: "All Orders", roles: ["admin", "support"] },
+];
+
+function Menu() {
+  const { user } = useAuth(); // null when logged out
+
+  // Keep links with no roles, or whose roles include the user's role
+  const visibleLinks = MENU_LINKS.filter((link) => !link.roles || (user && link.roles.includes(user.role)));
+
+  return (
+    <nav aria-label="Main menu">
+      <ul className="nav">
+        {visibleLinks.map((link) => (
+          <li className="nav-item" key={link.path}>
+            {/* end on "/" so Home isn't highlighted on every page */}
+            <NavLink to={link.path} end={link.path === "/"} className="nav-link text-dark">
+              {link.label}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  );
+}
+
+export default Menu;
+
+
+
+
+B12. src/App.jsx (replace: all routes, M1–M5)
+
+import { Route, Routes } from "react-router-dom"; // Routes = list of pages, Route = one page
+
+import Header from "./components/layout/Header.jsx";
+import Footer from "./components/layout/Footer.jsx";
+import ProtectedRoute from "./components/common/ProtectedRoute.jsx";
+
+import HomePage from "./pages/HomePage.jsx";
+import RegisterPage from "./pages/RegisterPage.jsx";
+import LoginPage from "./pages/LoginPage.jsx";
+import ProfilePage from "./pages/ProfilePage.jsx";
+import ProductListPage from "./pages/ProductListPage.jsx";
+import ProductDetailsPage from "./pages/ProductDetailsPage.jsx";
+import CartPage from "./pages/CartPage.jsx";
+import CheckoutPage from "./pages/CheckoutPage.jsx";
+import OrderHistoryPage from "./pages/OrderHistoryPage.jsx";
+import OrderDetailsPage from "./pages/OrderDetailsPage.jsx";
+import AllOrdersPage from "./pages/AllOrdersPage.jsx";
+
+// Layout: Header + Main (changes with the URL) + Footer
+function App() {
+  return (
+    <div className="d-flex flex-column min-vh-100">
+      <Header />
+
+      <main className="flex-grow-1 container py-4">
+        <Routes>
+          {/* Public pages: anyone */}
+          <Route path="/" element={<HomePage />} />
+          <Route path="/register" element={<RegisterPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/products" element={<ProductListPage />} />
+          {/* :productId = placeholder, e.g. /products/3 */}
+          <Route path="/products/:productId" element={<ProductDetailsPage />} />
+
+          {/* Logged-in users (any role) */}
+          <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
+          <Route path="/cart" element={<ProtectedRoute><CartPage /></ProtectedRoute>} />
+          <Route path="/checkout" element={<ProtectedRoute><CheckoutPage /></ProtectedRoute>} />
+          <Route path="/orders" element={<ProtectedRoute><OrderHistoryPage /></ProtectedRoute>} />
+          {/* :orderId must match useParams() in OrderDetailsPage */}
+          <Route path="/orders/:orderId" element={<ProtectedRoute><OrderDetailsPage /></ProtectedRoute>} />
+
+          {/* Admin & Support only */}
+          <Route
+            path="/admin/orders"
+            element={<ProtectedRoute roles={["admin", "support"]}><AllOrdersPage /></ProtectedRoute>}
+          />
+        </Routes>
+      </main>
+
+      <Footer />
+    </div>
+  );
+}
+
+export default App;
+
+
+
+
