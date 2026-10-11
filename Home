@@ -1,0 +1,23 @@
+import { Link } from "react-router-dom";
+import heroImage from "../assets/hero.png"; // import a picture from src/assets (Vite gives us its URL)
+
+// Home page: heading, one picture, and a button to the products
+function HomePage() {
+  return (
+    <div className="text-center">
+      <h1 className="fw-bold">Welcome to ABC Shop</h1>
+      <p className="text-secondary">Electronics, books, clothing, and home essentials in one place.</p>
+
+      {/* img-fluid = shrink the picture to fit small screens */}
+      <img src={heroImage} alt="ABC Shop" className="img-fluid my-4" style={{ maxHeight: "350px" }} />
+
+      <div>
+        <Link to="/products" className="btn btn-dark btn-lg">
+          Shop now
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+export default HomePage;
